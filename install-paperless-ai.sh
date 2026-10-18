@@ -169,9 +169,12 @@ install_packages() {
   log "Installing system packages"
   export DEBIAN_FRONTEND=noninteractive
   apt-get update
+  # python3-setuptools: Paperless-AI's lockfile pins node-gyp 8, which imports
+  # "distutils". Python 3.12+ removed that module; setuptools' shim restores it,
+  # so native Node modules can still be compiled when no prebuilt binary is used.
   apt-get install -y --no-install-recommends \
     ca-certificates curl gnupg tar gzip \
-    python3 python3-venv python3-dev build-essential
+    python3 python3-venv python3-dev python3-setuptools build-essential
 }
 
 install_node() {
@@ -293,7 +296,16 @@ install_node_modules() {
     return 0
   fi
   log "Installing Node.js packages"
-  as_ai npm ci --omit=dev --no-audit --no-fund --loglevel=error
+  if ! as_ai npm ci --omit=dev --no-audit --no-fund --loglevel=error; then
+    # Native modules first try a prebuilt download; show why that was skipped.
+    local npm_log
+    npm_log=$(find "$INSTALL_DIR/.npm/_logs" -name '*-debug-*.log' -printf '%T@ %p\n' 2>/dev/null \
+                | sort -n | tail -n 1 | cut -d' ' -f2- || true)
+    if [[ -n $npm_log ]]; then
+      grep -h 'prebuild-install' "$npm_log" | tail -n 5 >&2 || true
+    fi
+    die "npm could not install Paperless-AI's packages (see above). Full log: ${npm_log:-$INSTALL_DIR/.npm/_logs}"
+  fi
 }
 
 install_rag() {
